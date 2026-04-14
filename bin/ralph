@@ -14,7 +14,8 @@ show_help() {
 ralph $VERSION - Ralph Loop ランナー
 
 使い方:
-  ralph [オプション]
+  ralph init        PROMPT.md と TODO.md を生成する
+  ralph [オプション]  Ralph Loop を実行する
 
 オプション:
   --prompt FILE   指示書ファイル (デフォルト: PROMPT.md)
@@ -25,6 +26,263 @@ ralph $VERSION - Ralph Loop ランナー
   --help          このヘルプを表示
 EOF
 }
+
+# ------- init サブコマンド -------
+
+ARCHIVE_DIR=".ralph-archive"
+SCRATCH_FILE="${SCRATCH_FILE:-SCRATCH.md}"
+
+write_static_prompt() {
+  cat > "$1" <<'PROMPT_EOF'
+あなたは自律的に作業するエージェントです。
+
+# 手順
+
+1. このメッセージの冒頭に書かれている「進捗ファイル」のパスを確認してください
+2. その進捗ファイルを読んでください
+3. 未完了 ([ ]) のタスクを1つだけ選び、実装してください
+4. 完了したら進捗ファイルのそのタスクを [x] に変えてください
+5. 何をやったかを SCRATCH.md に1〜2行で追記してください
+
+# 制約
+
+- 1回の実行で扱うタスクは1つだけ
+- 進捗ファイルに書かれていないことはやらない
+- 既存のテストを壊さない
+- 不明点は SCRATCH.md に「QUESTION:」として記録してスキップ
+
+# このプロジェクト固有のルール
+
+<!-- このセクションに、プロジェクト固有の制約を書いてください。
+例: 使用言語、テストフレームワーク、触ってはいけないディレクトリ、コーディング規約 など。
+`ralph init` で AI モードを選んだ場合は、ここが自動で埋まります。 -->
+PROMPT_EOF
+}
+
+write_static_todo() {
+  cat > "$1" <<'TODO_EOF'
+# やることリスト
+
+- [ ] (ここに最初のタスクを書く)
+- [ ] (ここに次のタスクを書く)
+TODO_EOF
+}
+
+prompt_yn() {
+  local question="$1"
+  local default="${2:-Y}"
+  # 非対話環境では常に false（AI 起動や .gitignore 変更など副作用のある操作をスキップ）
+  if [ ! -t 0 ]; then
+    return 1
+  fi
+  local answer
+  printf "%s" "$question"
+  read -r answer
+  answer="${answer:-$default}"
+  [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+archive_current_cycle() {
+  # TODO.md と SCRATCH.md を .ralph-archive/ に移動（タイムスタンプ付き）
+  local ts
+  ts=$(date +%Y%m%d-%H%M%S)
+  mkdir -p "$ARCHIVE_DIR"
+  if [ -f "$TODO_FILE" ]; then
+    mv "$TODO_FILE" "$ARCHIVE_DIR/TODO-$ts.md"
+    echo "  $TODO_FILE → $ARCHIVE_DIR/TODO-$ts.md"
+  fi
+  if [ -f "$SCRATCH_FILE" ]; then
+    mv "$SCRATCH_FILE" "$ARCHIVE_DIR/SCRATCH-$ts.md"
+    echo "  $SCRATCH_FILE → $ARCHIVE_DIR/SCRATCH-$ts.md"
+  fi
+}
+
+snapshot_for_inheritance() {
+  # TODO.md を .ralph-archive/ にコピー（スナップショット、元は残す）
+  local ts
+  ts=$(date +%Y%m%d-%H%M%S)
+  mkdir -p "$ARCHIVE_DIR"
+  if [ -f "$TODO_FILE" ]; then
+    cp "$TODO_FILE" "$ARCHIVE_DIR/TODO-$ts-inherited.md"
+    echo "  $TODO_FILE を $ARCHIVE_DIR/TODO-$ts-inherited.md に記録しました（引き継ぎ元）"
+  fi
+  if [ -f "$SCRATCH_FILE" ]; then
+    cp "$SCRATCH_FILE" "$ARCHIVE_DIR/SCRATCH-$ts-inherited.md"
+  fi
+}
+
+launch_claude() {
+  local initial_prompt="$1"
+  if ! command -v claude >/dev/null; then
+    echo "エラー: claude コマンドが見つかりません。" >&2
+    echo "     AI モードには Claude Code のインストールが必要です。" >&2
+    exit 1
+  fi
+  echo ""
+  echo "Claude Code を対話モードで起動します..."
+  echo "（対話が終わったら /exit で終了し、生成物を確認してから 'ralph' を実行してください）"
+  echo ""
+  claude "$initial_prompt"
+}
+
+run_ai_new() {
+  local p="ralph-init スキルを『新規モード』で使ってください。カレントディレクトリには骨格のみの PROMPT.md と雛形の TODO.md が置かれています。PROMPT.md の \"# このプロジェクト固有のルール\" セクションを更新し、TODO.md をプロジェクト用に書き換えてください。"
+  launch_claude "$p"
+}
+
+run_ai_cycle() {
+  local p="ralph-init スキルを『サイクル継続モード』で使ってください。PROMPT.md は既に存在し変更不要です。前サイクルの TODO.md と SCRATCH.md は $ARCHIVE_DIR/ にタイムスタンプ付きでアーカイブされています。最新のアーカイブを読み、何が完了したか理解したうえで、次サイクル用の TODO.md をユーザと対話で作成してください。PROMPT.md は触らないでください。"
+  launch_claude "$p"
+}
+
+run_ai_inherit() {
+  local p="ralph-init スキルを『引き継ぎモード』で使ってください。前サイクルの未完了タスクが残った TODO.md が現在のディレクトリにあり、同じ内容が $ARCHIVE_DIR/TODO-*-inherited.md にスナップショットとして保存されています。TODO.md から未完了 ([ ]) タスクを抽出し、整理・追加提案をユーザと対話して新しい TODO.md を作成してください。PROMPT.md は触らないでください。"
+  launch_claude "$p"
+}
+
+prompt_gitignore_update() {
+  local gi=".gitignore"
+  [ -f "$gi" ] || return 0
+
+  local need_archive=false
+  local need_logs=false
+  grep -qxF ".ralph-archive/" "$gi" || need_archive=true
+  grep -qxF ".ralph-logs/" "$gi" || need_logs=true
+
+  if [ "$need_archive" = false ] && [ "$need_logs" = false ]; then
+    return 0
+  fi
+
+  local entries=""
+  [ "$need_archive" = true ] && entries="$entries .ralph-archive/"
+  [ "$need_logs" = true ] && entries="$entries .ralph-logs/"
+
+  echo ""
+  if prompt_yn ".gitignore に$entries を追加しますか？(Y/n): " "Y"; then
+    [ "$need_archive" = true ] && echo ".ralph-archive/" >> "$gi"
+    [ "$need_logs" = true ] && echo ".ralph-logs/" >> "$gi"
+    echo "✓ .gitignore を更新しました"
+  else
+    echo "(.gitignore 更新はスキップしました)"
+  fi
+}
+
+# --- 各パターンの処理 ---
+
+cmd_init_first_time() {
+  echo "新規プロジェクトとして初期化します。"
+  echo ""
+
+  local use_ai=false
+  if prompt_yn "AI で生成しますか？(Y/n): " "Y"; then
+    use_ai=true
+  fi
+
+  write_static_prompt "$PROMPT_FILE"
+  write_static_todo "$TODO_FILE"
+  echo "✓ $PROMPT_FILE と $TODO_FILE を作成しました"
+
+  if [ "$use_ai" = true ]; then
+    run_ai_new
+  fi
+}
+
+cmd_init_next_cycle() {
+  echo "前サイクルが完了しています。次のサイクルへ移行します。"
+  echo ""
+  echo "アーカイブ中..."
+  archive_current_cycle
+
+  write_static_todo "$TODO_FILE"
+  echo "✓ 新しい $TODO_FILE を作成しました"
+
+  if prompt_yn "AI で次サイクルの TODO.md を作成しますか？(Y/n): " "Y"; then
+    run_ai_cycle
+  fi
+}
+
+cmd_init_incomplete() {
+  local incomplete
+  incomplete=$(grep -cE "^- \[ \]" "$TODO_FILE" 2>/dev/null | tr -d '\n')
+  echo "未完了タスクが $incomplete 件残っています。"
+  echo "  (1) 新しい TODO.md に引き継ぐ"
+  echo "  (2) そのままアーカイブして新規作成"
+  echo "  (3) 中止"
+
+  local choice
+  if [ -t 0 ]; then
+    printf "選択 [1/2/3]: "
+    read -r choice
+  else
+    choice="3"
+    echo "(非対話環境のため中止します)"
+  fi
+
+  case "$choice" in
+    1)
+      snapshot_for_inheritance
+      if prompt_yn "AI で引き継ぎ整理しますか？(Y/n): " "Y"; then
+        run_ai_inherit
+      else
+        echo ""
+        echo "$TODO_FILE を手動で編集してから 'ralph' を実行してください。"
+      fi
+      ;;
+    2)
+      echo "アーカイブ中..."
+      archive_current_cycle
+      write_static_todo "$TODO_FILE"
+      echo "✓ 新しい $TODO_FILE を作成しました"
+      if prompt_yn "AI で次サイクルの TODO.md を作成しますか？(Y/n): " "Y"; then
+        run_ai_cycle
+      fi
+      ;;
+    *)
+      echo "中止しました。"
+      exit 0
+      ;;
+  esac
+}
+
+cmd_init() {
+  echo "===== ralph init ====="
+
+  local has_prompt=false
+  local has_todo=false
+  local incomplete=0
+
+  [ -f "$PROMPT_FILE" ] && has_prompt=true
+  [ -f "$TODO_FILE" ] && has_todo=true
+
+  if [ "$has_todo" = true ]; then
+    incomplete=$(grep -cE "^- \[ \]" "$TODO_FILE" 2>/dev/null | tr -d '\n')
+    incomplete=${incomplete:-0}
+  fi
+
+  if [ "$has_prompt" = false ]; then
+    cmd_init_first_time
+  elif [ "$incomplete" -gt 0 ]; then
+    cmd_init_incomplete
+  else
+    cmd_init_next_cycle
+  fi
+
+  prompt_gitignore_update
+
+  echo ""
+  echo "===== init 完了 ====="
+  echo "生成物を確認してから 'ralph' を実行してください。"
+}
+
+# ------- サブコマンドディスパッチ -------
+
+if [[ "${1:-}" == "init" ]]; then
+  shift
+  cmd_init "$@"
+  exit 0
+fi
+
+# ------- Ralph Loop 本体 -------
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -38,8 +296,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -f "$PROMPT_FILE" ] || { echo "エラー: $PROMPT_FILE が見つかりません" >&2; exit 1; }
-[ -f "$TODO_FILE" ]   || { echo "エラー: $TODO_FILE が見つかりません" >&2; exit 1; }
+[ -f "$PROMPT_FILE" ] || { echo "エラー: $PROMPT_FILE が見つかりません。先に 'ralph init' を実行してください" >&2; exit 1; }
+[ -f "$TODO_FILE" ]   || { echo "エラー: $TODO_FILE が見つかりません。先に 'ralph init' を実行してください" >&2; exit 1; }
 command -v claude >/dev/null || { echo "エラー: claude コマンドが見つかりません" >&2; exit 1; }
 
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
