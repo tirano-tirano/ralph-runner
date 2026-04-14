@@ -167,28 +167,65 @@ ralph --prompt instructions.md --todo tasks.md
 
 ## DevContainer での利用
 
-DevContainer 環境で自動インストールするには、`.devcontainer/devcontainer.json` に以下を追加:
+DevContainer 環境では、コンテナ作成時に自動で ralph 本体とスキルをインストールできます。
+
+### 配置方針（プロジェクトレベル）
+
+- **ralph 本体**: `$HOME/.local/bin/ralph`（コンテナ内。コンテナ再作成のたびに post-create で入れ直す）
+- **ralph-init スキル**: `<ワークスペース>/.claude/skills/ralph-init/SKILL.md`（ホストからマウントされているので、コンテナ再作成しても消えない）
+
+これにより、スキルはプロジェクトごとに独立したものになり、VSCode のファイルツリーにも表示されます。
+
+### 手順
+
+`.devcontainer/devcontainer.json` に次を追加:
 
 ```json
 {
-  "postCreateCommand": ".devcontainer/setup.sh"
+  "postCreateCommand": ".devcontainer/post-create.sh"
 }
 ```
 
-`.devcontainer/setup.sh` を作成:
+`.devcontainer/post-create.sh` を作成:
 
 ```bash
 #!/bin/bash
 set -e
-curl -fsSL https://raw.githubusercontent.com/tirano-tirano/ralph-runner/main/install.sh | bash
+
+# ralph-init スキルをワークスペース（プロジェクト）配下に配置する
+RALPH_SKILL_DIR="$PWD/.claude/skills/ralph-init" \
+  curl -fsSL https://raw.githubusercontent.com/tirano-tirano/ralph-runner/main/install.sh | bash
+
+# PATH に ~/.local/bin を追加
 if ! grep -q '/.local/bin' ~/.bashrc 2>/dev/null; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 fi
 ```
 
 ```bash
-chmod +x .devcontainer/setup.sh
+chmod +x .devcontainer/post-create.sh
 ```
+
+`postCreateCommand` はコンテナ作成直後にワークスペースルートで実行されるため、`$PWD` がそのままプロジェクトルートになります。
+
+### `.gitignore` への追加（推奨）
+
+スキル本体は install.sh が毎回最新版を取得するため、git にはコミットしないのが推奨です。
+
+```gitignore
+# ralph-init スキル本体（post-create.sh で自動取得）
+.claude/skills/ralph-init/
+```
+
+### 既存のインストールを持つ環境のクリーンアップ
+
+以前のバージョンでは `$HOME/.claude/skills/ralph-init/` にインストールしていました。プロジェクトレベル方式に切り替える場合、古いインストールは削除して問題ありません。
+
+```bash
+rm -rf "$HOME/.claude/skills/ralph-init"
+```
+
+削除しなくても動作に支障はありませんが、同じ名前のスキルが2箇所に存在すると、プロジェクト側が優先される挙動になります。
 
 ### 注意: ralph の実行場所
 

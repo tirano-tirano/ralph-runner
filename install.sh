@@ -22,12 +22,8 @@ echo "✓ ralph を $INSTALL_DIR にインストールしました"
 
 # Claude Code スキル (ralph-init)
 mkdir -p "$SKILL_DIR"
-if [ -f "$SKILL_DIR/SKILL.md" ]; then
-  mv "$SKILL_DIR/SKILL.md" "$SKILL_DIR/SKILL.md.bak"
-  echo "  既存の $SKILL_DIR/SKILL.md を SKILL.md.bak にバックアップしました"
-fi
 curl -fsSL "$REPO_RAW/skills/ralph-init/SKILL.md" -o "$SKILL_DIR/SKILL.md"
-echo "✓ ralph-init スキルを $SKILL_DIR にインストールしました"
+echo "✓ ralph-init スキルを $SKILL_DIR にインストールしました（既存は上書き）"
 
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
   echo "⚠ $INSTALL_DIR が PATH に含まれていません"
