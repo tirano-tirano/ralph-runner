@@ -190,6 +190,23 @@ fi
 chmod +x .devcontainer/setup.sh
 ```
 
+### 注意: ralph の実行場所
+
+`ralph` と `ralph init` は、生成物（`PROMPT.md`, `TODO.md`, `SCRATCH.md`, `.ralph-archive/`, `.ralph-logs/`）をすべてカレントディレクトリ（相対パス）に書き出します。
+
+DevContainer では、**ホストからマウントされたプロジェクトディレクトリ内で `ralph` を実行してください**。`$HOME` や `/tmp` などコンテナ内のみのパスで実行すると、コンテナを作り直したときに生成物が失われます。
+
+```bash
+# 良い例: ホストにマウントされたプロジェクト内
+cd /workspaces/my-project
+ralph init
+ralph
+
+# 悪い例: コンテナ内にしか存在しない場所
+cd /tmp
+ralph init  # → /tmp/TODO.md はコンテナ再作成時に消える
+```
+
 ## ライセンス
 
 MIT License - 詳細は [LICENSE](LICENSE) を参照。
