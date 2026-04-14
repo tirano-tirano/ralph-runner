@@ -1,0 +1,9 @@
+# Ralph 実行時に生成されるログ
+.ralph-logs/
+
+# Claude が作業中に生成するメモ（プロジェクトにより判断）
+# SCRATCH.md
+
+# OS 生成ファイル
+.DS_Store
+Thumbs.db

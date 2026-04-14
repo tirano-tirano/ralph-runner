@@ -1,0 +1,84 @@
+#!/bin/bash
+# ralph - オリジナル版 Ralph Loop ランナー
+set -e
+
+VERSION="0.1.0"
+
+PROMPT_FILE="${PROMPT_FILE:-PROMPT.md}"
+TODO_FILE="${TODO_FILE:-TODO.md}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-20}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-60}"
+
+show_help() {
+  cat <<EOF
+ralph $VERSION - Ralph Loop ランナー
+
+使い方:
+  ralph [オプション]
+
+オプション:
+  --prompt FILE   指示書ファイル (デフォルト: PROMPT.md)
+  --todo FILE     進捗ファイル (デフォルト: TODO.md)
+  --max N         最大繰り返し回数 (デフォルト: 20)
+  --sleep N       周回間の待機秒数 (デフォルト: 60)
+  --version       バージョン表示
+  --help          このヘルプを表示
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --prompt)   PROMPT_FILE="$2"; shift 2 ;;
+    --todo)     TODO_FILE="$2"; shift 2 ;;
+    --max)      MAX_ITERATIONS="$2"; shift 2 ;;
+    --sleep)    SLEEP_SECONDS="$2"; shift 2 ;;
+    --version)  echo "ralph $VERSION"; exit 0 ;;
+    --help|-h)  show_help; exit 0 ;;
+    *) echo "不明なオプション: $1" >&2; show_help; exit 1 ;;
+  esac
+done
+
+[ -f "$PROMPT_FILE" ] || { echo "エラー: $PROMPT_FILE が見つかりません" >&2; exit 1; }
+[ -f "$TODO_FILE" ]   || { echo "エラー: $TODO_FILE が見つかりません" >&2; exit 1; }
+command -v claude >/dev/null || { echo "エラー: claude コマンドが見つかりません" >&2; exit 1; }
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "⚠ 警告: gitリポジトリではありません。事故時に巻き戻せません。続けますか? (y/N)"
+  read -r answer < /dev/tty
+  [[ "$answer" != "y" ]] && exit 0
+fi
+
+mkdir -p .ralph-logs
+LOG_FILE=".ralph-logs/ralph-$(date +%Y%m%d-%H%M%S).log"
+
+echo "===== Ralph $VERSION 起動 =====" | tee "$LOG_FILE"
+echo "PROMPT: $PROMPT_FILE" | tee -a "$LOG_FILE"
+echo "TODO:   $TODO_FILE"   | tee -a "$LOG_FILE"
+echo "MAX:    $MAX_ITERATIONS 回" | tee -a "$LOG_FILE"
+echo "SLEEP:  $SLEEP_SECONDS 秒"  | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"
+
+trap 'echo ""; echo "===== Ralph 中断されました ====="; exit 130' INT TERM
+
+ITERATION=0
+while [ $ITERATION -lt $MAX_ITERATIONS ]; do
+  ITERATION=$((ITERATION + 1))
+  echo "===== Iteration $ITERATION / $MAX_ITERATIONS =====" | tee -a "$LOG_FILE"
+
+  {
+    echo "# 作業対象ファイル"
+    echo "- 進捗ファイル: $TODO_FILE"
+    echo ""
+    cat "$PROMPT_FILE"
+  } | claude --dangerously-skip-permissions 2>&1 | tee -a "$LOG_FILE"
+
+  if ! grep -qE "^- \[ \]" "$TODO_FILE"; then
+    echo "全タスク完了。ループを終了します。" | tee -a "$LOG_FILE"
+    break
+  fi
+
+  echo "${SLEEP_SECONDS}秒待機... (Ctrl+Cで中断可能)" | tee -a "$LOG_FILE"
+  sleep "$SLEEP_SECONDS"
+done
+
+echo "===== Ralph 終了 (合計 $ITERATION 回) =====" | tee -a "$LOG_FILE"
