@@ -120,6 +120,7 @@ ralph init → ralph → （完了） → ralph init → ralph → ...
 | `init` | `PROMPT.md` と `TODO.md` を生成（対話で AI/固定テンプレを選択）| - |
 | `--prompt FILE` | 指示書ファイルを指定 | `PROMPT.md` |
 | `--todo FILE` | 進捗ファイルを指定 | `TODO.md` |
+| `--todo-pattern P` | 完了判定の grep パターンを指定 | `^- \[ \]` |
 | `--max N` | 最大繰り返し回数 | `20` |
 | `--sleep N` | 周回間の待機秒数 | `60` |
 | `--version` | バージョン表示 | - |
@@ -131,6 +132,7 @@ ralph init → ralph → （完了） → ralph init → ralph → ...
 |---|---|
 | `PROMPT_FILE` | `--prompt` |
 | `TODO_FILE` | `--todo` |
+| `TODO_PATTERN` | `--todo-pattern` |
 | `MAX_ITERATIONS` | `--max` |
 | `SLEEP_SECONDS` | `--sleep` |
 
@@ -142,6 +144,27 @@ ralph --max 10 --sleep 30
 
 # 別のファイル名を使う
 ralph --prompt instructions.md --todo tasks.md
+
+# feature ファイルを直接指定する（タスク行のみで完了判定）
+ralph --todo docs/features/F-001_user-registration.md \
+      --todo-pattern "^- \[ \] F-.*-T[0-9]"
+```
+
+### feature ファイル連携
+
+ドキュメント駆動開発の feature ファイル（要求・要件・技術仕様・タスクを1ファイルにまとめた形式）を Ralph Loop の進捗ファイルとして直接使える。
+
+```bash
+ralph --todo docs/features/F-001_user-registration.md
+```
+
+feature ファイルは自動検出される。ファイル内に `- [ ] F-xxx-Txx` 形式のタスク行が見つかると、タスク行のみを完了判定の対象にする。要求・要件のチェックボックスは追跡用として無視される。
+
+手動でパターンを指定したい場合は `--todo-pattern` を使う:
+
+```bash
+ralph --todo docs/features/F-001_xxx.md \
+      --todo-pattern "^- \[ \] F-.*-T[0-9]"
 ```
 
 ## ralph-init スキルについて

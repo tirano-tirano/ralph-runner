@@ -6,6 +6,7 @@ VERSION="0.1.0"
 
 PROMPT_FILE="${PROMPT_FILE:-PROMPT.md}"
 TODO_FILE="${TODO_FILE:-TODO.md}"
+TODO_PATTERN="${TODO_PATTERN:-}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-20}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-60}"
 
@@ -18,12 +19,14 @@ ralph $VERSION - Ralph Loop ランナー
   ralph [オプション]  Ralph Loop を実行する
 
 オプション:
-  --prompt FILE   指示書ファイル (デフォルト: PROMPT.md)
-  --todo FILE     進捗ファイル (デフォルト: TODO.md)
-  --max N         最大繰り返し回数 (デフォルト: 20)
-  --sleep N       周回間の待機秒数 (デフォルト: 60)
-  --version       バージョン表示
-  --help          このヘルプを表示
+  --prompt FILE     指示書ファイル (デフォルト: PROMPT.md)
+  --todo FILE       進捗ファイル (デフォルト: TODO.md)
+  --todo-pattern P  完了判定の grep パターン (デフォルト: "^- \[ \]")
+                    feature ファイル使用時: "^- \[ \] F-.*-T[0-9]"
+  --max N           最大繰り返し回数 (デフォルト: 20)
+  --sleep N         周回間の待機秒数 (デフォルト: 60)
+  --version         バージョン表示
+  --help            このヘルプを表示
 EOF
 }
 
@@ -62,6 +65,15 @@ write_static_prompt() {
 - 進捗ファイルに書かれていないことはやらない
 - 既存のテストを壊さない
 - 不明点は `./SCRATCH.md` に「QUESTION:」として記録してスキップ
+
+# feature ファイルを進捗ファイルとして使う場合
+
+進捗ファイルが feature ファイル（管理番号 F-xxx 付き）の場合、以下の追加ルールに従ってください:
+
+- 実装対象は「## タスク」セクションの `- [ ]` 行（F-xxx-T で始まる行）のみ
+- 「## 要求」「## 要件」のチェックボックスは追跡用なので触らない
+- テストタスクと実装タスクがペアになっている場合は、上から順に処理する（テストが先）
+- タスク完了後、そのタスクが参照している技術仕様・要件・要求のチェック伝播は行わない（別途実施）
 
 # このプロジェクト固有のルール
 
@@ -298,12 +310,13 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --prompt)   PROMPT_FILE="$2"; shift 2 ;;
-    --todo)     TODO_FILE="$2"; shift 2 ;;
-    --max)      MAX_ITERATIONS="$2"; shift 2 ;;
-    --sleep)    SLEEP_SECONDS="$2"; shift 2 ;;
-    --version)  echo "ralph $VERSION"; exit 0 ;;
-    --help|-h)  show_help; exit 0 ;;
+    --prompt)       PROMPT_FILE="$2"; shift 2 ;;
+    --todo)         TODO_FILE="$2"; shift 2 ;;
+    --todo-pattern) TODO_PATTERN="$2"; shift 2 ;;
+    --max)          MAX_ITERATIONS="$2"; shift 2 ;;
+    --sleep)        SLEEP_SECONDS="$2"; shift 2 ;;
+    --version)      echo "ralph $VERSION"; exit 0 ;;
+    --help|-h)      show_help; exit 0 ;;
     *) echo "不明なオプション: $1" >&2; show_help; exit 1 ;;
   esac
 done
@@ -322,10 +335,15 @@ mkdir -p .ralph-logs
 LOG_FILE=".ralph-logs/ralph-$(date +%Y%m%d-%H%M%S).log"
 
 echo "===== Ralph $VERSION 起動 =====" | tee "$LOG_FILE"
-echo "PROMPT: $PROMPT_FILE" | tee -a "$LOG_FILE"
-echo "TODO:   $TODO_FILE"   | tee -a "$LOG_FILE"
-echo "MAX:    $MAX_ITERATIONS 回" | tee -a "$LOG_FILE"
-echo "SLEEP:  $SLEEP_SECONDS 秒"  | tee -a "$LOG_FILE"
+echo "PROMPT:  $PROMPT_FILE" | tee -a "$LOG_FILE"
+echo "TODO:    $TODO_FILE"   | tee -a "$LOG_FILE"
+if [ -n "$TODO_PATTERN" ]; then
+  echo "PATTERN: $TODO_PATTERN (手動指定)" | tee -a "$LOG_FILE"
+elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$TODO_FILE"; then
+  echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
+fi
+echo "MAX:     $MAX_ITERATIONS 回" | tee -a "$LOG_FILE"
+echo "SLEEP:   $SLEEP_SECONDS 秒"  | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 trap 'echo ""; echo "===== Ralph 中断されました ====="; exit 130' INT TERM
@@ -342,7 +360,15 @@ while [ $ITERATION -lt $MAX_ITERATIONS ]; do
     cat "$PROMPT_FILE"
   } | claude --dangerously-skip-permissions 2>&1 | tee -a "$LOG_FILE"
 
-  if ! grep -qE "^- \[ \]" "$TODO_FILE"; then
+  if [ -n "$TODO_PATTERN" ]; then
+    COMPLETION_PATTERN="$TODO_PATTERN"
+  elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$TODO_FILE"; then
+    # feature ファイル検出: タスク行（F-xxx-Txx）のみで完了判定
+    COMPLETION_PATTERN="^- \[ \] F-.*-T[0-9]"
+  else
+    COMPLETION_PATTERN="^- \[ \]"
+  fi
+  if ! grep -qE "$COMPLETION_PATTERN" "$TODO_FILE"; then
     echo "全タスク完了。ループを終了します。" | tee -a "$LOG_FILE"
     break
   fi
