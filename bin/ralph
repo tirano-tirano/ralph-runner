@@ -2,13 +2,15 @@
 # ralph - オリジナル版 Ralph Loop ランナー
 set -e
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 PROMPT_FILE="${PROMPT_FILE:-PROMPT.md}"
 TODO_FILE="${TODO_FILE:-TODO.md}"
+TODO_FILE_EXPLICIT=false
 TODO_PATTERN="${TODO_PATTERN:-}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-20}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-60}"
+FEATURES_DIR="${FEATURES_DIR:-docs/features}"
 
 show_help() {
   cat <<EOF
@@ -21,9 +23,11 @@ ralph $VERSION - Ralph Loop ランナー
 オプション:
   --prompt FILE     指示書ファイル (デフォルト: PROMPT.md)
   --todo FILE       進捗ファイル (デフォルト: TODO.md)
+                    省略時は docs/features/ の feature ファイルを自動検出
+  --features-dir D  feature ファイルのディレクトリ (デフォルト: docs/features)
   --todo-pattern P  完了判定の grep パターン (デフォルト: "^- \[ \]")
                     feature ファイル使用時: "^- \[ \] F-.*-T[0-9]"
-  --max N           最大繰り返し回数 (デフォルト: 20)
+  --max N           最大繰り返し回数 (デフォルト: 20、feature ファイルごと)
   --sleep N         周回間の待機秒数 (デフォルト: 60)
   --version         バージョン表示
   --help            このヘルプを表示
@@ -298,6 +302,44 @@ cmd_init() {
   echo "生成物を確認してから 'ralph' を実行してください。"
 }
 
+# ------- feature ファイル自動検出 -------
+
+is_feature_done() {
+  # frontmatter の status: done を検出
+  local file="$1"
+  head -20 "$file" | sed -n '/^---$/,/^---$/p' | grep -qE "^status:\s*done"
+}
+
+has_incomplete_feature_tasks() {
+  # feature ファイルに未完了タスク（F-xxx-Txx 形式）があるか
+  local file="$1"
+  grep -qE "^- \[ \] F-.*-T[0-9]" "$file"
+}
+
+discover_feature_files() {
+  # docs/features/ から未完了の feature ファイルを F-xxx 番号順に列挙
+  local dir="$1"
+  local files=()
+
+  if [ ! -d "$dir" ]; then
+    return
+  fi
+
+  # F-xxx を含むファイルを番号順にソート
+  while IFS= read -r f; do
+    # status: done のファイルはスキップ
+    if is_feature_done "$f"; then
+      continue
+    fi
+    # 未完了タスクがあるファイルのみ
+    if has_incomplete_feature_tasks "$f"; then
+      files+=("$f")
+    fi
+  done < <(find "$dir" -maxdepth 1 -name "*.md" -print | sort)
+
+  printf '%s\n' "${files[@]}"
+}
+
 # ------- サブコマンドディスパッチ -------
 
 if [[ "${1:-}" == "init" ]]; then
@@ -311,7 +353,8 @@ fi
 while [[ $# -gt 0 ]]; do
   case $1 in
     --prompt)       PROMPT_FILE="$2"; shift 2 ;;
-    --todo)         TODO_FILE="$2"; shift 2 ;;
+    --todo)         TODO_FILE="$2"; TODO_FILE_EXPLICIT=true; shift 2 ;;
+    --features-dir) FEATURES_DIR="$2"; shift 2 ;;
     --todo-pattern) TODO_PATTERN="$2"; shift 2 ;;
     --max)          MAX_ITERATIONS="$2"; shift 2 ;;
     --sleep)        SLEEP_SECONDS="$2"; shift 2 ;;
@@ -322,8 +365,28 @@ while [[ $# -gt 0 ]]; do
 done
 
 [ -f "$PROMPT_FILE" ] || { echo "エラー: $PROMPT_FILE が見つかりません。先に 'ralph init' を実行してください" >&2; exit 1; }
-[ -f "$TODO_FILE" ]   || { echo "エラー: $TODO_FILE が見つかりません。先に 'ralph init' を実行してください" >&2; exit 1; }
 command -v claude >/dev/null || { echo "エラー: claude コマンドが見つかりません" >&2; exit 1; }
+
+# feature ファイル自動検出モードの判定
+MULTI_FEATURE_MODE=false
+FEATURE_FILES=()
+
+if [ "$TODO_FILE_EXPLICIT" = true ]; then
+  # --todo で明示指定 → 従来通り1ファイル処理
+  [ -f "$TODO_FILE" ] || { echo "エラー: $TODO_FILE が見つかりません" >&2; exit 1; }
+elif [ -f "$TODO_FILE" ]; then
+  # TODO.md が存在する → 従来通り1ファイル処理
+  :
+else
+  # TODO.md がない → feature ファイルを自動検出
+  mapfile -t FEATURE_FILES < <(discover_feature_files "$FEATURES_DIR")
+  if [ ${#FEATURE_FILES[@]} -eq 0 ]; then
+    echo "エラー: $TODO_FILE が見つからず、$FEATURES_DIR/ にも未完了の feature ファイルがありません" >&2
+    echo "  'ralph init' で TODO.md を作成するか、$FEATURES_DIR/ に feature ファイルを配置してください" >&2
+    exit 1
+  fi
+  MULTI_FEATURE_MODE=true
+fi
 
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
   echo "⚠ 警告: gitリポジトリではありません。事故時に巻き戻せません。続けますか? (y/N)"
@@ -334,47 +397,103 @@ fi
 mkdir -p .ralph-logs
 LOG_FILE=".ralph-logs/ralph-$(date +%Y%m%d-%H%M%S).log"
 
-echo "===== Ralph $VERSION 起動 =====" | tee "$LOG_FILE"
-echo "PROMPT:  $PROMPT_FILE" | tee -a "$LOG_FILE"
-echo "TODO:    $TODO_FILE"   | tee -a "$LOG_FILE"
-if [ -n "$TODO_PATTERN" ]; then
-  echo "PATTERN: $TODO_PATTERN (手動指定)" | tee -a "$LOG_FILE"
-elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$TODO_FILE"; then
-  echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
-fi
-echo "MAX:     $MAX_ITERATIONS 回" | tee -a "$LOG_FILE"
-echo "SLEEP:   $SLEEP_SECONDS 秒"  | tee -a "$LOG_FILE"
-echo "" | tee -a "$LOG_FILE"
-
 trap 'echo ""; echo "===== Ralph 中断されました ====="; exit 130' INT TERM
 
-ITERATION=0
-while [ $ITERATION -lt $MAX_ITERATIONS ]; do
-  ITERATION=$((ITERATION + 1))
-  echo "===== Iteration $ITERATION / $MAX_ITERATIONS =====" | tee -a "$LOG_FILE"
+# ------- 1ファイル処理関数 -------
 
-  {
-    echo "# 進捗ファイルの指定"
-    echo "- 進捗ファイル: $TODO_FILE"
-    echo ""
-    cat "$PROMPT_FILE"
-  } | claude --dangerously-skip-permissions 2>&1 | tee -a "$LOG_FILE"
+run_single_file() {
+  local todo_file="$1"
+  local max_iter="$2"
+  local file_label="$3"
 
+  echo "" | tee -a "$LOG_FILE"
+  echo "===== $file_label =====" | tee -a "$LOG_FILE"
+  echo "TODO:    $todo_file" | tee -a "$LOG_FILE"
   if [ -n "$TODO_PATTERN" ]; then
-    COMPLETION_PATTERN="$TODO_PATTERN"
+    echo "PATTERN: $TODO_PATTERN (手動指定)" | tee -a "$LOG_FILE"
+  elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$todo_file"; then
+    echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
+  fi
+  echo "MAX:     $max_iter 回" | tee -a "$LOG_FILE"
+  echo "" | tee -a "$LOG_FILE"
+
+  local iteration=0
+  while [ $iteration -lt $max_iter ]; do
+    iteration=$((iteration + 1))
+    TOTAL_ITERATIONS=$((TOTAL_ITERATIONS + 1))
+    echo "===== Iteration $iteration / $max_iter ($file_label) =====" | tee -a "$LOG_FILE"
+
+    {
+      echo "# 進捗ファイルの指定"
+      echo "- 進捗ファイル: $todo_file"
+      echo ""
+      cat "$PROMPT_FILE"
+    } | claude --dangerously-skip-permissions 2>&1 | tee -a "$LOG_FILE"
+
+    local completion_pattern
+    if [ -n "$TODO_PATTERN" ]; then
+      completion_pattern="$TODO_PATTERN"
+    elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$todo_file"; then
+      completion_pattern="^- \[ \] F-.*-T[0-9]"
+    else
+      completion_pattern="^- \[ \]"
+    fi
+    if ! grep -qE "$completion_pattern" "$todo_file"; then
+      echo "全タスク完了: $todo_file" | tee -a "$LOG_FILE"
+      return 0
+    fi
+
+    echo "${SLEEP_SECONDS}秒待機... (Ctrl+Cで中断可能)" | tee -a "$LOG_FILE"
+    sleep "$SLEEP_SECONDS"
+  done
+
+  echo "最大回数到達 ($max_iter 回): $todo_file" | tee -a "$LOG_FILE"
+  return 1
+}
+
+# ------- メインループ -------
+
+TOTAL_ITERATIONS=0
+
+echo "===== Ralph $VERSION 起動 =====" | tee "$LOG_FILE"
+echo "PROMPT:  $PROMPT_FILE" | tee -a "$LOG_FILE"
+echo "SLEEP:   $SLEEP_SECONDS 秒"  | tee -a "$LOG_FILE"
+
+if [ "$MULTI_FEATURE_MODE" = true ]; then
+  echo "MODE:    feature ファイル自動検出" | tee -a "$LOG_FILE"
+  echo "DIR:     $FEATURES_DIR" | tee -a "$LOG_FILE"
+  echo "FILES:   ${#FEATURE_FILES[@]} 件の未完了 feature" | tee -a "$LOG_FILE"
+  for f in "${FEATURE_FILES[@]}"; do
+    echo "  - $f" | tee -a "$LOG_FILE"
+  done
+
+  COMPLETED_COUNT=0
+  for feature_file in "${FEATURE_FILES[@]}"; do
+    feature_name=$(basename "$feature_file")
+    if run_single_file "$feature_file" "$MAX_ITERATIONS" "$feature_name"; then
+      COMPLETED_COUNT=$((COMPLETED_COUNT + 1))
+    else
+      echo "" | tee -a "$LOG_FILE"
+      echo "⚠ $feature_name が最大回数内に完了しませんでした。残りの feature をスキップします。" | tee -a "$LOG_FILE"
+      break
+    fi
+  done
+
+  echo "" | tee -a "$LOG_FILE"
+  echo "===== Ralph 終了 =====" | tee -a "$LOG_FILE"
+  echo "  完了: $COMPLETED_COUNT / ${#FEATURE_FILES[@]} feature" | tee -a "$LOG_FILE"
+  echo "  合計: $TOTAL_ITERATIONS 回の iteration" | tee -a "$LOG_FILE"
+else
+  echo "TODO:    $TODO_FILE" | tee -a "$LOG_FILE"
+  if [ -n "$TODO_PATTERN" ]; then
+    echo "PATTERN: $TODO_PATTERN (手動指定)" | tee -a "$LOG_FILE"
   elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$TODO_FILE"; then
-    # feature ファイル検出: タスク行（F-xxx-Txx）のみで完了判定
-    COMPLETION_PATTERN="^- \[ \] F-.*-T[0-9]"
-  else
-    COMPLETION_PATTERN="^- \[ \]"
+    echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
   fi
-  if ! grep -qE "$COMPLETION_PATTERN" "$TODO_FILE"; then
-    echo "全タスク完了。ループを終了します。" | tee -a "$LOG_FILE"
-    break
-  fi
+  echo "MAX:     $MAX_ITERATIONS 回" | tee -a "$LOG_FILE"
 
-  echo "${SLEEP_SECONDS}秒待機... (Ctrl+Cで中断可能)" | tee -a "$LOG_FILE"
-  sleep "$SLEEP_SECONDS"
-done
+  run_single_file "$TODO_FILE" "$MAX_ITERATIONS" "$(basename "$TODO_FILE")"
 
-echo "===== Ralph 終了 (合計 $ITERATION 回) =====" | tee -a "$LOG_FILE"
+  echo "" | tee -a "$LOG_FILE"
+  echo "===== Ralph 終了 (合計 $TOTAL_ITERATIONS 回) =====" | tee -a "$LOG_FILE"
+fi
