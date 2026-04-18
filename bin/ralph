@@ -2,9 +2,10 @@
 # ralph - オリジナル版 Ralph Loop ランナー
 set -e
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 
-PROMPT_FILE="${PROMPT_FILE:-PROMPT.md}"
+RALPH_DIR=".ralph"
+PROMPT_FILE="${PROMPT_FILE:-.ralph/PROMPT.md}"
 TODO_FILE="${TODO_FILE:-TODO.md}"
 TODO_FILE_EXPLICIT=false
 TODO_PATTERN="${TODO_PATTERN:-}"
@@ -17,11 +18,11 @@ show_help() {
 ralph $VERSION - Ralph Loop ランナー
 
 使い方:
-  ralph init        PROMPT.md と TODO.md を生成する
+  ralph init        .ralph/ ディレクトリと PROMPT.md を生成する
   ralph [オプション]  Ralph Loop を実行する
 
 オプション:
-  --prompt FILE     指示書ファイル (デフォルト: PROMPT.md)
+  --prompt FILE     指示書ファイル (デフォルト: .ralph/PROMPT.md)
   --todo FILE       進捗ファイル (デフォルト: TODO.md)
                     省略時は docs/features/ の feature ファイルを自動検出
   --features-dir D  feature ファイルのディレクトリ (デフォルト: docs/features)
@@ -36,8 +37,8 @@ EOF
 
 # ------- init サブコマンド -------
 
-ARCHIVE_DIR=".ralph-archive"
-SCRATCH_FILE="${SCRATCH_FILE:-SCRATCH.md}"
+ARCHIVE_DIR="$RALPH_DIR/archive"
+SCRATCH_FILE="${SCRATCH_FILE:-$RALPH_DIR/SCRATCH.md}"
 
 write_static_prompt() {
   cat > "$1" <<'PROMPT_EOF'
@@ -49,10 +50,10 @@ write_static_prompt() {
 
 - **進捗ファイル**: `./TODO.md`
   （実行時オプションで別ファイルが指定されている場合は、メッセージ冒頭の「進捗ファイルの指定」のパスを優先してください）
-- **この指示書**: `./PROMPT.md`
-- **作業ログ**: `./SCRATCH.md`
+- **この指示書**: `./.ralph/PROMPT.md`
+- **作業ログ**: `./.ralph/SCRATCH.md`
   （存在しなければ新規作成してください）
-- **過去サイクルのアーカイブ**: `./.ralph-archive/`
+- **過去サイクルのアーカイブ**: `./.ralph/archive/`
   （前サイクルの `TODO-*.md` と `SCRATCH-*.md` がタイムスタンプ付きで置かれています。必要に応じて読んでください）
 
 # 手順
@@ -61,14 +62,14 @@ write_static_prompt() {
 2. その進捗ファイルを読んでください
 3. 未完了 ([ ]) のタスクを1つだけ選び、実装してください
 4. 完了したら進捗ファイルのそのタスクを [x] に変えてください
-5. 何をやったかを `./SCRATCH.md` に1〜2行で追記してください
+5. 何をやったかを `./.ralph/SCRATCH.md` に1〜2行で追記してください
 
 # 制約
 
 - 1回の実行で扱うタスクは1つだけ
 - 進捗ファイルに書かれていないことはやらない
 - 既存のテストを壊さない
-- 不明点は `./SCRATCH.md` に「QUESTION:」として記録してスキップ
+- 不明点は `./.ralph/SCRATCH.md` に「QUESTION:」として記録してスキップ
 
 # feature ファイルを進捗ファイルとして使う場合
 
@@ -111,7 +112,7 @@ prompt_yn() {
 }
 
 archive_current_cycle() {
-  # TODO.md と SCRATCH.md を .ralph-archive/ に移動（タイムスタンプ付き）
+  # TODO.md と SCRATCH.md を .ralph/archive/ に移動（タイムスタンプ付き）
   local ts
   ts=$(date +%Y%m%d-%H%M%S)
   mkdir -p "$ARCHIVE_DIR"
@@ -126,7 +127,7 @@ archive_current_cycle() {
 }
 
 snapshot_for_inheritance() {
-  # TODO.md を .ralph-archive/ にコピー（スナップショット、元は残す）
+  # TODO.md を .ralph/archive/ にコピー（スナップショット、元は残す）
   local ts
   ts=$(date +%Y%m%d-%H%M%S)
   mkdir -p "$ARCHIVE_DIR"
@@ -154,17 +155,17 @@ launch_claude() {
 }
 
 run_ai_new() {
-  local p="ralph-init スキルを『新規モード』で使ってください。カレントディレクトリには骨格のみの PROMPT.md と雛形の TODO.md が置かれています。PROMPT.md の \"# このプロジェクト固有のルール\" セクションを更新し、TODO.md をプロジェクト用に書き換えてください。"
+  local p="ralph-init スキルを『新規モード』で使ってください。カレントディレクトリには骨格のみの $PROMPT_FILE と雛形の TODO.md が置かれています。$PROMPT_FILE の \"# このプロジェクト固有のルール\" セクションを更新し、TODO.md をプロジェクト用に書き換えてください。"
   launch_claude "$p"
 }
 
 run_ai_cycle() {
-  local p="ralph-init スキルを『サイクル継続モード』で使ってください。PROMPT.md は既に存在し変更不要です。前サイクルの TODO.md と SCRATCH.md は $ARCHIVE_DIR/ にタイムスタンプ付きでアーカイブされています。最新のアーカイブを読み、何が完了したか理解したうえで、次サイクル用の TODO.md をユーザと対話で作成してください。PROMPT.md は触らないでください。"
+  local p="ralph-init スキルを『サイクル継続モード』で使ってください。$PROMPT_FILE は既に存在し変更不要です。前サイクルの TODO.md と SCRATCH.md は $ARCHIVE_DIR/ にタイムスタンプ付きでアーカイブされています。最新のアーカイブを読み、何が完了したか理解したうえで、次サイクル用の TODO.md をユーザと対話で作成してください。$PROMPT_FILE は触らないでください。"
   launch_claude "$p"
 }
 
 run_ai_inherit() {
-  local p="ralph-init スキルを『引き継ぎモード』で使ってください。前サイクルの未完了タスクが残った TODO.md が現在のディレクトリにあり、同じ内容が $ARCHIVE_DIR/TODO-*-inherited.md にスナップショットとして保存されています。TODO.md から未完了 ([ ]) タスクを抽出し、整理・追加提案をユーザと対話して新しい TODO.md を作成してください。PROMPT.md は触らないでください。"
+  local p="ralph-init スキルを『引き継ぎモード』で使ってください。前サイクルの未完了タスクが残った TODO.md が現在のディレクトリにあり、同じ内容が $ARCHIVE_DIR/TODO-*-inherited.md にスナップショットとして保存されています。TODO.md から未完了 ([ ]) タスクを抽出し、整理・追加提案をユーザと対話して新しい TODO.md を作成してください。$PROMPT_FILE は触らないでください。"
   launch_claude "$p"
 }
 
@@ -172,23 +173,27 @@ prompt_gitignore_update() {
   local gi=".gitignore"
   [ -f "$gi" ] || return 0
 
+  local need_scratch=false
   local need_archive=false
   local need_logs=false
-  grep -qxF ".ralph-archive/" "$gi" || need_archive=true
-  grep -qxF ".ralph-logs/" "$gi" || need_logs=true
+  grep -qxF "$RALPH_DIR/SCRATCH.md" "$gi" || need_scratch=true
+  grep -qxF "$RALPH_DIR/archive/" "$gi" || need_archive=true
+  grep -qxF "$RALPH_DIR/logs/" "$gi" || need_logs=true
 
-  if [ "$need_archive" = false ] && [ "$need_logs" = false ]; then
+  if [ "$need_scratch" = false ] && [ "$need_archive" = false ] && [ "$need_logs" = false ]; then
     return 0
   fi
 
   local entries=""
-  [ "$need_archive" = true ] && entries="$entries .ralph-archive/"
-  [ "$need_logs" = true ] && entries="$entries .ralph-logs/"
+  [ "$need_scratch" = true ] && entries="$entries $RALPH_DIR/SCRATCH.md"
+  [ "$need_archive" = true ] && entries="$entries $RALPH_DIR/archive/"
+  [ "$need_logs" = true ] && entries="$entries $RALPH_DIR/logs/"
 
   echo ""
   if prompt_yn ".gitignore に$entries を追加しますか？(Y/n): " "Y"; then
-    [ "$need_archive" = true ] && echo ".ralph-archive/" >> "$gi"
-    [ "$need_logs" = true ] && echo ".ralph-logs/" >> "$gi"
+    [ "$need_scratch" = true ] && echo "$RALPH_DIR/SCRATCH.md" >> "$gi"
+    [ "$need_archive" = true ] && echo "$RALPH_DIR/archive/" >> "$gi"
+    [ "$need_logs" = true ] && echo "$RALPH_DIR/logs/" >> "$gi"
     echo "✓ .gitignore を更新しました"
   else
     echo "(.gitignore 更新はスキップしました)"
@@ -206,6 +211,7 @@ cmd_init_first_time() {
     use_ai=true
   fi
 
+  mkdir -p "$RALPH_DIR"
   write_static_prompt "$PROMPT_FILE"
   write_static_todo "$TODO_FILE"
   echo "✓ $PROMPT_FILE と $TODO_FILE を作成しました"
@@ -394,8 +400,8 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
   [[ "$answer" != "y" ]] && exit 0
 fi
 
-mkdir -p .ralph-logs
-LOG_FILE=".ralph-logs/ralph-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$RALPH_DIR/logs"
+LOG_FILE="$RALPH_DIR/logs/ralph-$(date +%Y%m%d-%H%M%S).log"
 
 trap 'echo ""; echo "===== Ralph 中断されました ====="; exit 130' INT TERM
 
