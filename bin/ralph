@@ -61,8 +61,22 @@ write_static_prompt() {
 1. メッセージ冒頭に書かれている「進捗ファイルの指定」のパスを確認してください（指定がなければ `./TODO.md`）
 2. その進捗ファイルを読んでください
 3. 未完了 ([ ]) のタスクを1つだけ選び、実装してください
+   - 保留 ([-]) のタスクはスキップしてください
 4. 完了したら進捗ファイルのそのタスクを [x] に変えてください
-5. 何をやったかを `./.ralph/SCRATCH.md` に1〜2行で追記してください
+5. タスクが現時点で完了不可能な場合（環境未構築、外部サービス未設定、前提タスク未完了など）:
+   - チェックボックスを `[-]` に変えてください
+   - 直後に `<!-- 保留: {理由} -->` をコメントとして追記してください
+   - 例: `- [-] F-001-T05: Stripe決済の実装 <!-- 保留: Stripe APIキーが未設定のため実装不可 -->`
+6. 何をやったかを `./.ralph/SCRATCH.md` に1〜2行で追記してください
+7. 変更をコミットしてください（タスク1つにつき1コミット）
+   - コミットメッセージは Conventional Commits 形式: `<型>(<スコープ>): <説明>`
+   - 型の例: feat, fix, refactor, test, docs, chore, style, perf
+   - スコープ: 機能名や領域（例: auth, cart, api）。省略可。
+   - 説明: 命令形で50文字以内（日本語OK: 「〜を追加」「〜を修正」）
+   - 例: `feat(auth): ログインAPIのエンドポイントを追加`
+   - 例: `test(auth): ログインAPIの統合テストを追加`
+   - テストと実装が同じタスクなら1コミットにまとめてよい
+   - 保留 ([-]) にしたタスクはコミット不要
 
 # 制約
 
@@ -70,6 +84,7 @@ write_static_prompt() {
 - 進捗ファイルに書かれていないことはやらない
 - 既存のテストを壊さない
 - 不明点は `./.ralph/SCRATCH.md` に「QUESTION:」として記録してスキップ
+- 同じタスクを保留 ([-]) にするのは1回だけ（既に [-] のタスクは再試行しない）
 
 # feature ファイルを進捗ファイルとして使う場合
 
@@ -417,7 +432,7 @@ run_single_file() {
   echo "TODO:    $todo_file" | tee -a "$LOG_FILE"
   if [ -n "$TODO_PATTERN" ]; then
     echo "PATTERN: $TODO_PATTERN (手動指定)" | tee -a "$LOG_FILE"
-  elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$todo_file"; then
+  elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
     echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
   fi
   echo "MAX:     $max_iter 回" | tee -a "$LOG_FILE"
@@ -439,7 +454,7 @@ run_single_file() {
     local completion_pattern
     if [ -n "$TODO_PATTERN" ]; then
       completion_pattern="$TODO_PATTERN"
-    elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$todo_file"; then
+    elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
       completion_pattern="^- \[ \] F-.*-T[0-9]"
     else
       completion_pattern="^- \[ \]"
@@ -485,21 +500,39 @@ if [ "$MULTI_FEATURE_MODE" = true ]; then
     fi
   done
 
+  # 保留タスクの集計
+  local hold_total=0
+  for feature_file in "${FEATURE_FILES[@]}"; do
+    local hold_count
+    hold_count=$(grep -cE "^- \[-\]" "$feature_file" 2>/dev/null || echo 0)
+    hold_total=$((hold_total + hold_count))
+  done
+
   echo "" | tee -a "$LOG_FILE"
   echo "===== Ralph 終了 =====" | tee -a "$LOG_FILE"
   echo "  完了: $COMPLETED_COUNT / ${#FEATURE_FILES[@]} feature" | tee -a "$LOG_FILE"
   echo "  合計: $TOTAL_ITERATIONS 回の iteration" | tee -a "$LOG_FILE"
+  if [ "$hold_total" -gt 0 ]; then
+    echo "  保留: $hold_total 件のタスク ([-] マーカー)" | tee -a "$LOG_FILE"
+  fi
 else
   echo "TODO:    $TODO_FILE" | tee -a "$LOG_FILE"
   if [ -n "$TODO_PATTERN" ]; then
     echo "PATTERN: $TODO_PATTERN (手動指定)" | tee -a "$LOG_FILE"
-  elif grep -qE "^- \[[ x]\] F-.*-T[0-9]" "$TODO_FILE"; then
+  elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$TODO_FILE"; then
     echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
   fi
   echo "MAX:     $MAX_ITERATIONS 回" | tee -a "$LOG_FILE"
 
   run_single_file "$TODO_FILE" "$MAX_ITERATIONS" "$(basename "$TODO_FILE")"
 
+  # 保留タスクの集計
+  local hold_count
+  hold_count=$(grep -cE "^- \[-\]" "$TODO_FILE" 2>/dev/null || echo 0)
+
   echo "" | tee -a "$LOG_FILE"
   echo "===== Ralph 終了 (合計 $TOTAL_ITERATIONS 回) =====" | tee -a "$LOG_FILE"
+  if [ "$hold_count" -gt 0 ]; then
+    echo "  保留: $hold_count 件のタスク ([-] マーカー)" | tee -a "$LOG_FILE"
+  fi
 fi

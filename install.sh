@@ -33,6 +33,6 @@ fi
 
 echo "===== インストール完了 ====="
 echo "使い方:"
-echo "  ralph init    # PROMPT.md と TODO.md を生成"
+echo "  ralph init    # .ralph/ ディレクトリと PROMPT.md を生成"
 echo "  ralph         # Ralph Loop を実行"
 echo "  ralph --help  # ヘルプ表示"
