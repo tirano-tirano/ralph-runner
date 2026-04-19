@@ -420,6 +420,61 @@ LOG_FILE="$RALPH_DIR/logs/ralph-$(date +%Y%m%d-%H%M%S).log"
 
 trap 'echo ""; echo "===== Ralph 中断されました ====="; exit 130' INT TERM
 
+# ------- タスク集計ヘルパー -------
+
+# タスク行のパターンを返す（feature ファイル or 通常 TODO）
+get_task_pattern() {
+  local todo_file="$1"
+  local custom_pattern="$2"
+  if [ -n "$custom_pattern" ]; then
+    echo "$custom_pattern"
+  elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
+    echo "^- \[.\] F-.*-T[0-9]"
+  else
+    echo "^- \[.\]"
+  fi
+}
+
+# タスク数を集計して表示する
+show_task_summary() {
+  local todo_file="$1"
+  local custom_pattern="$2"
+  local pattern
+  pattern=$(get_task_pattern "$todo_file" "$custom_pattern")
+
+  local total done todo hold
+  total=$(grep -cE "$pattern" "$todo_file" 2>/dev/null || echo 0)
+  done=$(grep -cE "^- \[x\]" "$todo_file" 2>/dev/null || echo 0)
+  hold=$(grep -cE "^- \[-\]" "$todo_file" 2>/dev/null || echo 0)
+  todo=$(grep -cE "^- \[ \]" "$todo_file" 2>/dev/null || echo 0)
+
+  # feature ファイルの場合、タスク行だけをカウント
+  if grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
+    total=$(grep -cE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
+    done=$(grep -cE "^- \[x\] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
+    hold=$(grep -cE "^- \[-\] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
+    todo=$(grep -cE "^- \[ \] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
+  fi
+
+  echo "  タスク: $todo 残 / $total 全体 ($done 完了, $hold 保留)"
+}
+
+# 次に取り組むタスクを表示する
+show_next_task() {
+  local todo_file="$1"
+  local next_task
+
+  if grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
+    next_task=$(grep -m1 -E "^- \[ \] F-.*-T[0-9]" "$todo_file" 2>/dev/null)
+  else
+    next_task=$(grep -m1 -E "^- \[ \]" "$todo_file" 2>/dev/null)
+  fi
+
+  if [ -n "$next_task" ]; then
+    echo "  次: $next_task"
+  fi
+}
+
 # ------- 1ファイル処理関数 -------
 
 run_single_file() {
@@ -436,13 +491,18 @@ run_single_file() {
     echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
   fi
   echo "MAX:     $max_iter 回" | tee -a "$LOG_FILE"
+  show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
+  show_next_task "$todo_file" | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
 
   local iteration=0
   while [ $iteration -lt $max_iter ]; do
     iteration=$((iteration + 1))
     TOTAL_ITERATIONS=$((TOTAL_ITERATIONS + 1))
+    echo "" | tee -a "$LOG_FILE"
     echo "===== Iteration $iteration / $max_iter ($file_label) =====" | tee -a "$LOG_FILE"
+    show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
+    show_next_task "$todo_file" | tee -a "$LOG_FILE"
 
     {
       echo "# 進捗ファイルの指定"
