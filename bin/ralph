@@ -191,7 +191,7 @@ launch_claude() {
 }
 
 run_ai_new() {
-  local p="ralph-init スキルを『新規モード』で使ってください。カレントディレクトリには骨格のみの $PROMPT_FILE と雛形の TODO.md が置かれています。$PROMPT_FILE の \"# このプロジェクト固有のルール\" セクションを更新し、TODO.md をプロジェクト用に書き換えてください。"
+  local p="ralph-init スキルを『新規モード』で使ってください。カレントディレクトリには骨格のみの $PROMPT_FILE が置かれています。プロジェクトを調査し、タスクファイルの方針（TODO.md を新規作成するか、既存の feature ファイル等を使うか）をユーザーと相談してください。$PROMPT_FILE の \"# このプロジェクト固有のルール\" セクション（ralph-config 含む）を更新し、必要であれば TODO.md も作成してください。"
   launch_claude "$p"
 }
 
@@ -249,11 +249,16 @@ cmd_init_first_time() {
 
   mkdir -p "$RALPH_DIR"
   write_static_prompt "$PROMPT_FILE"
-  write_static_todo "$TODO_FILE"
-  echo "✓ $PROMPT_FILE と $TODO_FILE を作成しました"
+  echo "✓ $PROMPT_FILE を作成しました"
 
   if [ "$use_ai" = true ]; then
+    # AI モードでは TODO.md を事前に作らない
+    # スキルがプロジェクトを調査し、TODO.md を作るか feature ファイルを使うかをユーザーと相談して決める
     run_ai_new
+  else
+    # 非 AI モードでは雛形の TODO.md を作成
+    write_static_todo "$TODO_FILE"
+    echo "✓ $TODO_FILE を作成しました"
   fi
 }
 
