@@ -562,6 +562,33 @@ show_task_summary() {
   echo "  タスク: $todo 残 / $total 全体 ($done 完了, $hold 保留)"
 }
 
+# 全ファイル横断のタスク集計を表示する
+# 引数: TARGET_FILES 配列（グローバル変数）を参照
+show_global_summary() {
+  local g_total=0 g_done=0 g_todo=0 g_hold=0
+
+  for f in "${TARGET_FILES[@]}"; do
+    local total done todo hold
+    if grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$f" 2>/dev/null; then
+      total=$(grep -cE "^- \[[ x-]\] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
+      done=$(grep -cE "^- \[x\] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
+      hold=$(grep -cE "^- \[-\] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
+      todo=$(grep -cE "^- \[ \] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
+    else
+      total=$(grep -cE "^- \[.\]" "$f" 2>/dev/null || echo 0)
+      done=$(grep -cE "^- \[x\]" "$f" 2>/dev/null || echo 0)
+      hold=$(grep -cE "^- \[-\]" "$f" 2>/dev/null || echo 0)
+      todo=$(grep -cE "^- \[ \]" "$f" 2>/dev/null || echo 0)
+    fi
+    g_total=$((g_total + total))
+    g_done=$((g_done + done))
+    g_todo=$((g_todo + todo))
+    g_hold=$((g_hold + hold))
+  done
+
+  echo "  全体: $g_todo 残 / $g_total 全タスク ($g_done 完了, $g_hold 保留) [${#TARGET_FILES[@]} ファイル]"
+}
+
 # 次に取り組むタスクを表示する
 show_next_task() {
   local todo_file="$1"
@@ -594,6 +621,7 @@ run_single_file() {
   elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
     echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
   fi
+  show_global_summary | tee -a "$LOG_FILE"
   show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
   show_next_task "$todo_file" | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
@@ -608,6 +636,7 @@ run_single_file() {
     TOTAL_ITERATIONS=$((TOTAL_ITERATIONS + 1))
     echo "" | tee -a "$LOG_FILE"
     echo "===== Iteration $TOTAL_ITERATIONS / $MAX_ITERATIONS ($file_label) =====" | tee -a "$LOG_FILE"
+    show_global_summary | tee -a "$LOG_FILE"
     show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
     show_next_task "$todo_file" | tee -a "$LOG_FILE"
 
@@ -653,6 +682,8 @@ echo "FILES:   ${#TARGET_FILES[@]} 件の対象ファイル" | tee -a "$LOG_FILE
 for f in "${TARGET_FILES[@]}"; do
   echo "  - $f" | tee -a "$LOG_FILE"
 done
+echo "" | tee -a "$LOG_FILE"
+show_global_summary | tee -a "$LOG_FILE"
 
 COMPLETED_COUNT=0
 GLOBAL_MAX_REACHED=false
