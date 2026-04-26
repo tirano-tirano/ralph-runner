@@ -605,6 +605,36 @@ show_next_task() {
   fi
 }
 
+# ------- 完了判定関数 -------
+
+# get_completion_pattern: ファイルに対する完了判定用の grep パターンを返す
+# 未完了タスクが「ある」ことを検出するパターン（grep で hit = 未完了あり）
+get_completion_pattern() {
+  local todo_file="$1"
+
+  if [ -n "$TODO_PATTERN" ]; then
+    echo "$TODO_PATTERN"
+  elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file" 2>/dev/null; then
+    echo "^- \[ \] F-.*-T[0-9]"
+  else
+    echo "^- \[ \]"
+  fi
+}
+
+# is_file_complete: 指定ファイルの全タスクが完了済みか判定
+# 戻り値: 0=全タスク完了, 1=未完了タスクあり
+is_file_complete() {
+  local todo_file="$1"
+  local pattern
+  pattern=$(get_completion_pattern "$todo_file")
+
+  if grep -qE "$pattern" "$todo_file" 2>/dev/null; then
+    return 1  # 未完了タスクあり
+  else
+    return 0  # 全タスク完了
+  fi
+}
+
 # ------- 1ファイル処理関数 -------
 
 # run_single_file: 1つの TODO ファイルを処理する
@@ -625,6 +655,12 @@ run_single_file() {
   show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
   show_next_task "$todo_file" | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
+
+  # 事前完了チェック: すでに全タスク完了ならスキップ
+  if is_file_complete "$todo_file"; then
+    echo "全タスク完了済み — スキップ: $todo_file" | tee -a "$LOG_FILE"
+    return 0
+  fi
 
   while true; do
     # グローバル上限チェック
@@ -647,15 +683,7 @@ run_single_file() {
       cat "$PROMPT_FILE"
     } | claude --dangerously-skip-permissions 2>&1 | tee -a "$LOG_FILE"
 
-    local completion_pattern
-    if [ -n "$TODO_PATTERN" ]; then
-      completion_pattern="$TODO_PATTERN"
-    elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
-      completion_pattern="^- \[ \] F-.*-T[0-9]"
-    else
-      completion_pattern="^- \[ \]"
-    fi
-    if ! grep -qE "$completion_pattern" "$todo_file"; then
+    if is_file_complete "$todo_file"; then
       echo "全タスク完了: $todo_file" | tee -a "$LOG_FILE"
       return 0
     fi
