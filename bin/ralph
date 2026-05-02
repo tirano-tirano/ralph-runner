@@ -661,7 +661,9 @@ run_single_file() {
   elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
     echo "PATTERN: feature ファイル検出 — タスク行のみで完了判定" | tee -a "$LOG_FILE"
   fi
-  show_global_summary | tee -a "$LOG_FILE"
+  if [ ${#TARGET_FILES[@]} -gt 1 ]; then
+    show_global_summary | tee -a "$LOG_FILE"
+  fi
   show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
   show_next_task "$todo_file" | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
@@ -682,7 +684,9 @@ run_single_file() {
     TOTAL_ITERATIONS=$((TOTAL_ITERATIONS + 1))
     echo "" | tee -a "$LOG_FILE"
     echo "===== Iteration $TOTAL_ITERATIONS / $MAX_ITERATIONS ($file_label) =====" | tee -a "$LOG_FILE"
-    show_global_summary | tee -a "$LOG_FILE"
+    if [ ${#TARGET_FILES[@]} -gt 1 ]; then
+      show_global_summary | tee -a "$LOG_FILE"
+    fi
     show_task_summary "$todo_file" "$TODO_PATTERN" | tee -a "$LOG_FILE"
     show_next_task "$todo_file" | tee -a "$LOG_FILE"
 
@@ -721,7 +725,9 @@ for f in "${TARGET_FILES[@]}"; do
   echo "  - $f" | tee -a "$LOG_FILE"
 done
 echo "" | tee -a "$LOG_FILE"
-show_global_summary | tee -a "$LOG_FILE"
+if [ ${#TARGET_FILES[@]} -gt 1 ]; then
+  show_global_summary | tee -a "$LOG_FILE"
+fi
 
 COMPLETED_COUNT=0
 GLOBAL_MAX_REACHED=false
