@@ -539,27 +539,34 @@ get_task_pattern() {
 }
 
 # タスク数を集計して表示する
+# 完了判定（is_file_complete）と同じパターンを使用し、表示と判定を一致させる
 show_task_summary() {
   local todo_file="$1"
   local custom_pattern="$2"
-  local pattern
-  pattern=$(get_task_pattern "$todo_file" "$custom_pattern")
 
-  local total done todo hold
-  total=$(grep -cE "$pattern" "$todo_file" 2>/dev/null || echo 0)
-  done=$(grep -cE "^- \[x\]" "$todo_file" 2>/dev/null || echo 0)
-  hold=$(grep -cE "^- \[-\]" "$todo_file" 2>/dev/null || echo 0)
-  todo=$(grep -cE "^- \[ \]" "$todo_file" 2>/dev/null || echo 0)
+  local total=0 done=0 todo=0 hold=0
 
-  # feature ファイルの場合、タスク行だけをカウント
-  if grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file"; then
-    total=$(grep -cE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
-    done=$(grep -cE "^- \[x\] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
-    hold=$(grep -cE "^- \[-\] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
-    todo=$(grep -cE "^- \[ \] F-.*-T[0-9]" "$todo_file" 2>/dev/null || echo 0)
+  if [ -n "$custom_pattern" ]; then
+    # カスタムパターン指定時: 全チェックボックス行を total とし、未完了は custom_pattern で判定
+    total=$(grep -cE "^- \[.\]" "$todo_file" 2>/dev/null) || total=0
+    done=$(grep -cE "^- \[x\]" "$todo_file" 2>/dev/null) || done=0
+    hold=$(grep -cE "^- \[-\]" "$todo_file" 2>/dev/null) || hold=0
+    todo=$(grep -cE "$custom_pattern" "$todo_file" 2>/dev/null) || todo=0
+  elif grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file" 2>/dev/null; then
+    # feature ファイル: F-xxx-Txx 行のみカウント
+    total=$(grep -cE "^- \[[ x-]\] F-.*-T[0-9]" "$todo_file" 2>/dev/null) || total=0
+    done=$(grep -cE "^- \[x\] F-.*-T[0-9]" "$todo_file" 2>/dev/null) || done=0
+    hold=$(grep -cE "^- \[-\] F-.*-T[0-9]" "$todo_file" 2>/dev/null) || hold=0
+    todo=$(grep -cE "^- \[ \] F-.*-T[0-9]" "$todo_file" 2>/dev/null) || todo=0
+  else
+    # 汎用: 全チェックボックス行
+    total=$(grep -cE "^- \[.\]" "$todo_file" 2>/dev/null) || total=0
+    done=$(grep -cE "^- \[x\]" "$todo_file" 2>/dev/null) || done=0
+    hold=$(grep -cE "^- \[-\]" "$todo_file" 2>/dev/null) || hold=0
+    todo=$(grep -cE "^- \[ \]" "$todo_file" 2>/dev/null) || todo=0
   fi
 
-  echo "  タスク: $todo 残 / $total 全体 ($done 完了, $hold 保留)"
+  echo "  タスク: ${todo:-0} 残 / ${total:-0} 全体 (${done:-0} 完了, ${hold:-0} 保留)"
 }
 
 # 全ファイル横断のタスク集計を表示する
@@ -568,22 +575,25 @@ show_global_summary() {
   local g_total=0 g_done=0 g_todo=0 g_hold=0
 
   for f in "${TARGET_FILES[@]}"; do
-    local total done todo hold
+    local total=0 done=0 todo=0 hold=0
+    local pattern
+    pattern=$(get_completion_pattern "$f")
+
     if grep -qE "^- \[[ x-]\] F-.*-T[0-9]" "$f" 2>/dev/null; then
-      total=$(grep -cE "^- \[[ x-]\] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
-      done=$(grep -cE "^- \[x\] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
-      hold=$(grep -cE "^- \[-\] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
-      todo=$(grep -cE "^- \[ \] F-.*-T[0-9]" "$f" 2>/dev/null || echo 0)
+      total=$(grep -cE "^- \[[ x-]\] F-.*-T[0-9]" "$f" 2>/dev/null) || total=0
+      done=$(grep -cE "^- \[x\] F-.*-T[0-9]" "$f" 2>/dev/null) || done=0
+      hold=$(grep -cE "^- \[-\] F-.*-T[0-9]" "$f" 2>/dev/null) || hold=0
+      todo=$(grep -cE "^- \[ \] F-.*-T[0-9]" "$f" 2>/dev/null) || todo=0
     else
-      total=$(grep -cE "^- \[.\]" "$f" 2>/dev/null || echo 0)
-      done=$(grep -cE "^- \[x\]" "$f" 2>/dev/null || echo 0)
-      hold=$(grep -cE "^- \[-\]" "$f" 2>/dev/null || echo 0)
-      todo=$(grep -cE "^- \[ \]" "$f" 2>/dev/null || echo 0)
+      total=$(grep -cE "^- \[.\]" "$f" 2>/dev/null) || total=0
+      done=$(grep -cE "^- \[x\]" "$f" 2>/dev/null) || done=0
+      hold=$(grep -cE "^- \[-\]" "$f" 2>/dev/null) || hold=0
+      todo=$(grep -cE "$pattern" "$f" 2>/dev/null) || todo=0
     fi
-    g_total=$((g_total + total))
-    g_done=$((g_done + done))
-    g_todo=$((g_todo + todo))
-    g_hold=$((g_hold + hold))
+    g_total=$((g_total + ${total:-0}))
+    g_done=$((g_done + ${done:-0}))
+    g_todo=$((g_todo + ${todo:-0}))
+    g_hold=$((g_hold + ${hold:-0}))
   done
 
   echo "  全体: $g_todo 残 / $g_total 全タスク ($g_done 完了, $g_hold 保留) [${#TARGET_FILES[@]} ファイル]"
